@@ -1,4 +1,4 @@
-name: Build Unsigned Android APK
+name: Build Unsigned APK
 
 on:
   push:
@@ -17,6 +17,7 @@ on:
     branches:
       - main
       - master
+      - develop
     paths:
       - 'lib/**'
       - 'android/**'
@@ -27,78 +28,47 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-unsigned-apk:
-    name: Build Unsigned Android APK
+  analyzing:
+    uses: ./.github/workflows/_analyze.yml
+
+  checking:
+    uses: ./.github/workflows/_check.yml
+
+  testing:
+    uses: ./.github/workflows/_test.yml
+
+  build-android:
+    name: Build unsigned Android APK
+    needs:
+      - analyzing
+      - checking
+      - testing
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Java SDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-          
-      - name: Update Flutter submodule
-        run: git submodule update --init --recursive
-        shell: bash
-        
-      - name: Install Linux dependencies
+      - uses: ./.github/actions/setup_jdk
+      - uses: ./.github/actions/setup_flutter
+      - name: Build Debug APK (unsigned)
+        id: build-debug
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            curl git unzip xz-utils zip libglu1-mesa \
-            clang cmake git \
-            ninja-build pkg-config \
-            libgtk-3-dev liblzma-dev \
-            libstdc++-12-dev
+          flutter build apk --debug --flavor f_dev --no-shrink --verbose
+          DEBUG_APK_PATH="build/app/outputs/flutter-apk/app-f-dev-debug.apk"
+          echo "path=$DEBUG_APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Debug APK size: $(du -h $DEBUG_APK_PATH | cut -f1)"
         shell: bash
-        
-      - name: Add Flutter to syspath
+      - name: Build Release APK (unsigned)
+        id: build-release
         run: |
-          echo "${{ github.workspace }}/.flutter/bin:$PATH" >> $GITHUB_PATH
+          flutter build apk --release --flavor f_dev --no-shrink --verbose
+          RELEASE_APK_PATH="build/app/outputs/flutter-apk/app-f-dev-release.apk"
+          echo "path=$RELEASE_APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Release APK size: $(du -h $RELEASE_APK_PATH | cut -f1)"
         shell: bash
-        
-      - name: Get Flutter packages
-        run: |
-          echo $GITHUB_PATH
-          flutter pub get
-        shell: bash
-        
-      - name: Build Debug APK (Unsigned)
-        run: |
-          flutter build apk --debug --no-shrink
-        shell: bash
-        
-      - name: Build Release APK (Unsigned)
-        run: |
-          flutter build apk --release --no-shrink
-        shell: bash
-        
-      - name: Upload Debug APK
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: unsigned-android-apk
+          path: |
+            ${{ steps.build-debug.outputs.path }}
+            ${{ steps.build-release.outputs.path }}
           retention-days: 30
-          
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
-          
-      - name: Get APK info
-        id: apk-info
-        run: |
-          DEBUG_SIZE=$(du -h build/app/outputs/flutter-apk/app-debug.apk | cut -f1)
-          RELEASE_SIZE=$(du -h build/app/outputs/flutter-apk/app-release.apk | cut -f1)
-          echo "debug-size=$DEBUG_SIZE" >> $GITHUB_OUTPUT
-          echo "release-size=$RELEASE_SIZE" >> $GITHUB_OUTPUT
-          echo "## APK Information" >> $GITHUB_STEP_SUMMARY
-          echo "| Type | Size |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Debug | $DEBUG_SIZE |" >> $GITHUB_STEP_SUMMARY
-          echo "| Release | $RELEASE_SIZE |" >> $GITHUB_STEP_SUMMARY
-        shell: bash
